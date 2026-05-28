@@ -1,0 +1,987 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Termómetro Digital · Arduino + LM35</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=DM+Serif+Display:ital@0;1&family=DM+Sans:wght@300;400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #0b0f0e;
+  --surface: #111614;
+  --border: #1e2b26;
+  --accent: #00e5a0;
+  --accent2: #00b87a;
+  --warm: #f5c842;
+  --red: #ff4757;
+  --text: #e8f0ec;
+  --muted: #6a8878;
+  --card: #131a17;
+}
+
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html { scroll-behavior: smooth; }
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: 'DM Sans', sans-serif;
+  font-weight: 300;
+  overflow-x: hidden;
+  cursor: none;
+}
+
+/* ── CURSOR ── */
+.cursor {
+  width: 8px; height: 8px;
+  background: var(--accent);
+  border-radius: 50%;
+  position: fixed; pointer-events: none; z-index: 9999;
+  transform: translate(-50%,-50%);
+  transition: width .2s, height .2s, background .2s;
+}
+.cursor-ring {
+  width: 32px; height: 32px;
+  border: 1px solid var(--accent);
+  border-radius: 50%;
+  position: fixed; pointer-events: none; z-index: 9998;
+  transform: translate(-50%,-50%);
+  transition: transform .12s ease-out, width .2s, height .2s, opacity .2s;
+  opacity: 0.5;
+}
+
+/* ── NOISE OVERLAY ── */
+body::before {
+  content: '';
+  position: fixed; inset: 0;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.04'/%3E%3C/svg%3E");
+  pointer-events: none; z-index: 0; opacity: 0.4;
+}
+
+/* ── GRID LINES ── */
+body::after {
+  content: '';
+  position: fixed; inset: 0;
+  background-image:
+    linear-gradient(var(--border) 1px, transparent 1px),
+    linear-gradient(90deg, var(--border) 1px, transparent 1px);
+  background-size: 60px 60px;
+  pointer-events: none; z-index: 0; opacity: 0.3;
+}
+
+/* ── HERO ── */
+.hero {
+  min-height: 100vh;
+  display: flex; flex-direction: column;
+  justify-content: center;
+  padding: 0 8vw;
+  position: relative; z-index: 1;
+  overflow: hidden;
+}
+
+.hero-bg-circle {
+  position: absolute;
+  width: 600px; height: 600px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0,229,160,0.07) 0%, transparent 70%);
+  top: 50%; right: -100px;
+  transform: translateY(-50%);
+  pointer-events: none;
+}
+
+.hero-tag {
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  color: var(--accent);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  margin-bottom: 28px;
+  opacity: 0;
+  animation: fadeUp .6s .2s forwards;
+}
+
+.hero h1 {
+  font-family: 'DM Serif Display', serif;
+  font-size: clamp(52px, 8vw, 110px);
+  line-height: 0.95;
+  letter-spacing: -0.02em;
+  margin-bottom: 32px;
+  opacity: 0;
+  animation: fadeUp .7s .4s forwards;
+}
+
+.hero h1 em {
+  font-style: italic;
+  color: var(--accent);
+}
+
+.hero-sub {
+  font-size: clamp(15px, 1.8vw, 18px);
+  color: var(--muted);
+  max-width: 480px;
+  line-height: 1.7;
+  margin-bottom: 48px;
+  opacity: 0;
+  animation: fadeUp .7s .6s forwards;
+}
+
+.hero-btns {
+  display: flex; gap: 16px; flex-wrap: wrap;
+  opacity: 0;
+  animation: fadeUp .7s .8s forwards;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: var(--bg);
+  padding: 14px 32px;
+  border-radius: 2px;
+  font-family: 'Space Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-decoration: none;
+  transition: background .2s, transform .15s;
+  cursor: none;
+}
+.btn-primary:hover { background: var(--accent2); transform: translateY(-2px); }
+
+.btn-outline {
+  border: 1px solid var(--border);
+  color: var(--muted);
+  padding: 14px 32px;
+  border-radius: 2px;
+  font-family: 'Space Mono', monospace;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  text-decoration: none;
+  transition: border-color .2s, color .2s, transform .15s;
+  cursor: none;
+}
+.btn-outline:hover { border-color: var(--accent); color: var(--accent); transform: translateY(-2px); }
+
+/* LIVE TEMP WIDGET */
+.temp-widget {
+  position: absolute;
+  right: 8vw; top: 50%;
+  transform: translateY(-50%);
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 28px 32px;
+  text-align: center;
+  opacity: 0;
+  animation: fadeUp .8s 1s forwards;
+}
+
+.temp-widget .label {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: var(--muted);
+  text-transform: uppercase;
+  margin-bottom: 12px;
+}
+
+.temp-display {
+  font-family: 'Space Mono', monospace;
+  font-size: 64px;
+  font-weight: 700;
+  color: var(--accent);
+  line-height: 1;
+  text-shadow: 0 0 30px rgba(0,229,160,0.3);
+}
+
+.temp-display .unit {
+  font-size: 24px;
+  color: var(--muted);
+  vertical-align: super;
+  margin-left: 4px;
+}
+
+.temp-status {
+  margin-top: 12px;
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  color: var(--accent);
+  text-transform: uppercase;
+}
+
+.temp-bar {
+  margin-top: 16px;
+  width: 160px;
+  height: 3px;
+  background: var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+.temp-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  border-radius: 2px;
+  animation: tempBar 3s ease-in-out infinite alternate;
+}
+@keyframes tempBar { from { width: 40%; } to { width: 75%; } }
+
+/* ── SCROLL INDICATOR ── */
+.scroll-hint {
+  position: absolute;
+  bottom: 40px; left: 8vw;
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: var(--muted);
+  text-transform: uppercase;
+  display: flex; align-items: center; gap: 12px;
+  opacity: 0;
+  animation: fadeUp .6s 1.2s forwards;
+}
+.scroll-line {
+  width: 40px; height: 1px;
+  background: var(--muted);
+  animation: scrollLine 2s ease-in-out infinite;
+}
+@keyframes scrollLine { 0%,100%{width:40px} 50%{width:20px} }
+
+/* ── SECTIONS ── */
+section {
+  padding: 120px 8vw;
+  position: relative; z-index: 1;
+}
+
+.section-tag {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  color: var(--accent);
+  text-transform: uppercase;
+  margin-bottom: 16px;
+}
+
+.section-title {
+  font-family: 'DM Serif Display', serif;
+  font-size: clamp(36px, 5vw, 64px);
+  line-height: 1.1;
+  margin-bottom: 60px;
+}
+
+.section-title em { font-style: italic; color: var(--accent); }
+
+/* ── CONCEPTS GRID ── */
+.concepts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+}
+
+.concept-card {
+  background: var(--card);
+  padding: 40px 36px;
+  transition: background .25s;
+  position: relative;
+  overflow: hidden;
+}
+.concept-card::before {
+  content: '';
+  position: absolute;
+  top: 0; left: 0;
+  width: 3px; height: 0;
+  background: var(--accent);
+  transition: height .3s;
+}
+.concept-card:hover { background: #161d1a; }
+.concept-card:hover::before { height: 100%; }
+
+.concept-icon {
+  font-size: 32px;
+  margin-bottom: 20px;
+  display: block;
+}
+
+.concept-number {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  color: var(--muted);
+  letter-spacing: 0.2em;
+  margin-bottom: 12px;
+}
+
+.concept-card h3 {
+  font-family: 'DM Serif Display', serif;
+  font-size: 24px;
+  margin-bottom: 14px;
+  line-height: 1.2;
+}
+
+.concept-card p {
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.75;
+}
+
+/* ── FORMULA ── */
+.formula-section {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.formula-wrap {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 80px;
+  align-items: center;
+}
+
+.formula-box {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 48px;
+  text-align: center;
+  position: relative;
+}
+
+.formula-box::before {
+  content: 'FÓRMULA CLAVE';
+  position: absolute;
+  top: -10px; left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg);
+  padding: 0 12px;
+  font-family: 'Space Mono', monospace;
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  color: var(--accent);
+}
+
+.formula-main {
+  font-family: 'Space Mono', monospace;
+  font-size: clamp(18px, 3vw, 28px);
+  color: var(--accent);
+  line-height: 1.8;
+}
+
+.formula-main .var { color: var(--warm); }
+.formula-main .op { color: var(--muted); }
+.formula-main .val { color: var(--text); }
+
+.formula-example {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border);
+  font-family: 'Space Mono', monospace;
+  font-size: 13px;
+  color: var(--muted);
+}
+.formula-example span { color: var(--accent); }
+
+.formula-desc h3 {
+  font-family: 'DM Serif Display', serif;
+  font-size: 36px;
+  margin-bottom: 20px;
+  line-height: 1.2;
+}
+
+.formula-desc p {
+  color: var(--muted);
+  line-height: 1.8;
+  margin-bottom: 20px;
+  font-size: 15px;
+}
+
+.formula-steps {
+  display: flex; flex-direction: column; gap: 12px;
+  margin-top: 32px;
+}
+
+.formula-step {
+  display: flex; gap: 16px; align-items: flex-start;
+}
+
+.step-num {
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  color: var(--accent);
+  background: rgba(0,229,160,0.08);
+  border: 1px solid rgba(0,229,160,0.2);
+  padding: 4px 10px;
+  border-radius: 2px;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.step-text {
+  font-size: 14px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+/* ── COMPONENTS ── */
+.components-list {
+  display: flex; flex-direction: column; gap: 1px;
+  background: var(--border);
+  border: 1px solid var(--border);
+}
+
+.component-row {
+  display: grid;
+  grid-template-columns: 60px 1fr auto;
+  align-items: center;
+  gap: 24px;
+  background: var(--card);
+  padding: 24px 32px;
+  transition: background .2s;
+}
+.component-row:hover { background: #161d1a; }
+
+.comp-num {
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+}
+
+.comp-info h4 {
+  font-size: 16px;
+  font-weight: 500;
+  margin-bottom: 4px;
+}
+.comp-info p {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.comp-badge {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  padding: 5px 12px;
+  border-radius: 2px;
+  text-transform: uppercase;
+}
+.badge-green { background: rgba(0,229,160,0.1); color: var(--accent); border: 1px solid rgba(0,229,160,0.2); }
+.badge-yellow { background: rgba(245,200,66,0.1); color: var(--warm); border: 1px solid rgba(245,200,66,0.2); }
+.badge-red { background: rgba(255,71,87,0.1); color: var(--red); border: 1px solid rgba(255,71,87,0.2); }
+
+/* ── PINS TABLE ── */
+.pins-section {
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.pins-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 40px;
+}
+
+.pin-table-wrap h3 {
+  font-family: 'DM Serif Display', serif;
+  font-size: 28px;
+  margin-bottom: 24px;
+}
+
+.pin-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-family: 'Space Mono', monospace;
+  font-size: 12px;
+}
+.pin-table th {
+  text-align: left;
+  padding: 10px 16px;
+  background: var(--bg);
+  color: var(--muted);
+  letter-spacing: 0.12em;
+  font-size: 10px;
+  text-transform: uppercase;
+  border-bottom: 1px solid var(--border);
+}
+.pin-table td {
+  padding: 14px 16px;
+  border-bottom: 1px solid var(--border);
+  color: var(--text);
+}
+.pin-table tr:last-child td { border-bottom: none; }
+.pin-table tr:hover td { background: rgba(0,229,160,0.03); }
+.pin-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 8px; }
+
+/* ── CODE BLOCK ── */
+.code-section { padding-top: 60px; }
+.code-block {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+.code-header {
+  display: flex; justify-content: space-between; align-items: center;
+  padding: 14px 24px;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.code-filename {
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+}
+.code-lang {
+  font-family: 'Space Mono', monospace;
+  font-size: 10px;
+  color: var(--accent);
+  background: rgba(0,229,160,0.08);
+  border: 1px solid rgba(0,229,160,0.15);
+  padding: 3px 10px;
+  border-radius: 2px;
+  letter-spacing: 0.1em;
+}
+pre {
+  padding: 32px 28px;
+  overflow-x: auto;
+  font-family: 'Space Mono', monospace;
+  font-size: 13px;
+  line-height: 1.8;
+  color: #a8c4b8;
+}
+.kw { color: #ff7eb3; }
+.fn { color: var(--accent); }
+.cm { color: #3d5a4a; font-style: italic; }
+.str { color: var(--warm); }
+.num { color: #7eb3ff; }
+.type { color: #b3a0ff; }
+
+/* ── FOOTER ── */
+footer {
+  border-top: 1px solid var(--border);
+  padding: 60px 8vw;
+  position: relative; z-index: 1;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 24px;
+}
+.footer-logo {
+  font-family: 'DM Serif Display', serif;
+  font-size: 22px;
+}
+.footer-logo em { font-style: italic; color: var(--accent); }
+.footer-info {
+  font-family: 'Space Mono', monospace;
+  font-size: 11px;
+  color: var(--muted);
+  letter-spacing: 0.1em;
+  text-align: right;
+  line-height: 2;
+}
+
+/* ── DIVIDER ── */
+.divider {
+  width: 100%; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--border), transparent);
+  margin: 0;
+}
+
+/* ── ANIMATIONS ── */
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.reveal {
+  opacity: 0;
+  transform: translateY(30px);
+  transition: opacity .7s ease, transform .7s ease;
+}
+.reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ── RESPONSIVE ── */
+@media (max-width: 900px) {
+  .temp-widget { display: none; }
+  .formula-wrap { grid-template-columns: 1fr; gap: 40px; }
+  .pins-grid { grid-template-columns: 1fr; }
+  footer { flex-direction: column; text-align: center; }
+  .footer-info { text-align: center; }
+}
+</style>
+</head>
+<body>
+
+<div class="cursor" id="cursor"></div>
+<div class="cursor-ring" id="cursorRing"></div>
+
+<!-- ═══════════ HERO ═══════════ -->
+<section class="hero">
+  <div class="hero-bg-circle"></div>
+
+  <div class="hero-tag">Proyecto de Electrónica Analógica · 2025</div>
+
+  <h1>Termómetro<br><em>Digital</em><br>con Arduino</h1>
+
+  <p class="hero-sub">
+    Sensor LM35 + Arduino Nano + LCD I2C. Medición de temperatura en tiempo real con visualización directa en grados Celsius. Aplicación residencial de bajo costo.
+  </p>
+
+  <div class="hero-btns">
+    <a href="#conceptos" class="btn-primary">VER CONCEPTOS →</a>
+    <a href="#codigo" class="btn-outline">VER CÓDIGO</a>
+  </div>
+
+  <!-- Live temp widget -->
+  <div class="temp-widget">
+    <div class="label">Temperatura actual</div>
+    <div class="temp-display" id="tempNum">28<span class="unit">°C</span></div>
+    <div class="temp-bar"><div class="temp-bar-fill" id="tempFill"></div></div>
+    <div class="temp-status" id="tempStatus">● TEMP NORMAL</div>
+  </div>
+
+  <div class="scroll-hint">
+    <div class="scroll-line"></div>
+    Scroll para explorar
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ═══════════ CONCEPTOS ═══════════ -->
+<section id="conceptos">
+  <div class="section-tag">Fundamentos teóricos</div>
+  <h2 class="section-title reveal">Conceptos <em>aplicados</em><br>en este proyecto</h2>
+
+  <div class="concepts-grid reveal">
+    <div class="concept-card">
+      <span class="concept-icon">⚡</span>
+      <div class="concept-number">01 · ELECTRÓNICA BÁSICA</div>
+      <h3>Sensores Analógicos</h3>
+      <p>Un sensor convierte una magnitud física (temperatura) en una señal eléctrica medible. El LM35 genera un voltaje proporcional a la temperatura: exactamente 10 mV por cada grado Celsius.</p>
+    </div>
+    <div class="concept-card">
+      <span class="concept-icon">🔄</span>
+      <div class="concept-number">02 · CONVERSIÓN</div>
+      <h3>Analógico → Digital</h3>
+      <p>El Arduino Nano tiene un convertidor ADC de 10 bits que transforma el voltaje continuo del sensor en un número entero entre 0 y 1023, procesable por el microcontrolador.</p>
+    </div>
+    <div class="concept-card">
+      <span class="concept-icon">🖥️</span>
+      <div class="concept-number">03 · MICROCONTROLADORES</div>
+      <h3>Arduino Nano</h3>
+      <p>Plataforma de desarrollo basada en el ATmega328P. Combina CPU, memoria Flash y periféricos en un chip. Opera a 16 MHz y es totalmente compatible con el sensor LM35 y la pantalla LCD I2C.</p>
+    </div>
+    <div class="concept-card">
+      <span class="concept-icon">📡</span>
+      <div class="concept-number">04 · COMUNICACIÓN</div>
+      <h3>Protocolo I2C</h3>
+      <p>Estándar de comunicación serial síncrona que usa solo 2 líneas (SDA y SCL). Permite conectar la pantalla LCD usando únicamente los pines A4 y A5 del Nano, simplificando enormemente el cableado.</p>
+    </div>
+    <div class="concept-card">
+      <span class="concept-icon">🔬</span>
+      <div class="concept-number">05 · SEMICONDUCTORES</div>
+      <h3>Diodos y Transistores</h3>
+      <p>El LM35 usa internamente transistores BJT en configuración diferencial para lograr la respuesta lineal. Los diodos protegen el circuito contra inversiones de polaridad accidentales.</p>
+    </div>
+    <div class="concept-card">
+      <span class="concept-icon">💻</span>
+      <div class="concept-number">06 · PROGRAMACIÓN</div>
+      <h3>Lectura y Control</h3>
+      <p>Con analogRead() se captura el valor ADC, se convierte a temperatura con la fórmula del LM35 y se muestra en pantalla con lógica condicional que activa alertas según el umbral configurado.</p>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ═══════════ FÓRMULA ═══════════ -->
+<section class="formula-section" id="formula">
+  <div class="formula-wrap">
+    <div class="formula-box reveal">
+      <div class="formula-main">
+        <div><span class="var">T</span><span class="op">(°C)</span> <span class="op">=</span> <span class="val">V<sub>out</sub></span> <span class="op">÷</span> <span class="num">10</span></div>
+        <br>
+        <div style="font-size:0.7em; color: var(--muted);">donde V<sub>out</sub> está en milivoltios</div>
+      </div>
+      <div class="formula-example">
+        Ejemplo: <span>300 mV → 30.0 °C</span><br>
+        Ejemplo: <span>250 mV → 25.0 °C</span><br>
+        Ejemplo: <span>375 mV → 37.5 °C</span>
+      </div>
+    </div>
+
+    <div class="formula-desc reveal">
+      <h3>La fórmula del LM35</h3>
+      <p>El LM35 es un sensor de temperatura calibrado de fábrica que entrega exactamente <strong style="color:var(--accent)">10 mV por cada grado Celsius</strong>. No requiere calibración externa.</p>
+      <p>En el código de Arduino, la conversión completa es:</p>
+
+      <div class="formula-steps">
+        <div class="formula-step">
+          <div class="step-num">01</div>
+          <div class="step-text">Leer el valor ADC con <code style="color:var(--accent)">analogRead(A0)</code> → valor entre 0 y 1023</div>
+        </div>
+        <div class="formula-step">
+          <div class="step-num">02</div>
+          <div class="step-text">Convertir a voltaje: <code style="color:var(--warm)">voltaje = valor × (5.0 / 1023.0)</code></div>
+        </div>
+        <div class="formula-step">
+          <div class="step-num">03</div>
+          <div class="step-text">Obtener temperatura: <code style="color:var(--accent)">temp = voltaje × 100.0</code></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ═══════════ COMPONENTES ═══════════ -->
+<section id="componentes">
+  <div class="section-tag">Hardware</div>
+  <h2 class="section-title reveal">Lista de <em>componentes</em></h2>
+
+  <div class="components-list reveal">
+    <div class="component-row">
+      <div class="comp-num">01</div>
+      <div class="comp-info">
+        <h4>Arduino Nano</h4>
+        <p>ATmega328P · 16 MHz · 5V · 6 entradas analógicas · Puerto USB Mini-B</p>
+      </div>
+      <div class="comp-badge badge-green">Procesamiento</div>
+    </div>
+    <div class="component-row">
+      <div class="comp-num">02</div>
+      <div class="comp-info">
+        <h4>Sensor LM35</h4>
+        <p>Empaque TO-92 · 10 mV/°C · Rango −55°C a +150°C · Precisión ±0.5°C</p>
+      </div>
+      <div class="comp-badge badge-yellow">Sensor</div>
+    </div>
+    <div class="component-row">
+      <div class="comp-num">03</div>
+      <div class="comp-info">
+        <h4>Pantalla LCD 16×2 con módulo I2C</h4>
+        <p>Controlador HD44780 · Módulo PCF8574 · Dirección I2C: 0x27 · Solo 4 cables</p>
+      </div>
+      <div class="comp-badge badge-green">Visualización</div>
+    </div>
+    <div class="component-row">
+      <div class="comp-num">04</div>
+      <div class="comp-info">
+        <h4>Protoboard</h4>
+        <p>830 puntos · Rieles de alimentación integrados · Sin soldadura</p>
+      </div>
+      <div class="comp-badge badge-yellow">Montaje</div>
+    </div>
+    <div class="component-row">
+      <div class="comp-num">05</div>
+      <div class="comp-info">
+        <h4>Cables Jumper Macho-Macho</h4>
+        <p>Múltiples colores · 20 cm · Para interconexión de componentes</p>
+      </div>
+      <div class="comp-badge badge-yellow">Conexión</div>
+    </div>
+    <div class="component-row">
+      <div class="comp-num">06</div>
+      <div class="comp-info">
+        <h4>Cable USB Mini-B</h4>
+        <p>Para programación y alimentación desde computadora</p>
+      </div>
+      <div class="comp-badge badge-green">Alimentación</div>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ═══════════ PINES ═══════════ -->
+<section class="pins-section" id="conexiones">
+  <div class="section-tag">Esquema de conexión</div>
+  <h2 class="section-title reveal">Tabla de <em>pines</em></h2>
+
+  <div class="pins-grid reveal">
+    <div class="pin-table-wrap">
+      <h3>Sensor LM35 → Nano</h3>
+      <table class="pin-table">
+        <thead>
+          <tr><th>Pin LM35</th><th>Nombre</th><th>Destino en Nano</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Pin 1 (izq)</td>
+            <td><span class="pin-dot" style="background:#DD2222"></span>VCC</td>
+            <td>Pin 5V</td>
+          </tr>
+          <tr>
+            <td>Pin 2 (centro)</td>
+            <td><span class="pin-dot" style="background:#CCAA00"></span>OUT</td>
+            <td>Pin A0</td>
+          </tr>
+          <tr>
+            <td>Pin 3 (der)</td>
+            <td><span class="pin-dot" style="background:#444"></span>GND</td>
+            <td>Pin GND</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="margin-top:16px; font-size:13px; color:var(--muted); line-height:1.7;">
+        ⚠️ Orienta el LM35 con la parte plana hacia ti. De izquierda a derecha: VCC · OUT · GND.
+      </p>
+    </div>
+
+    <div class="pin-table-wrap">
+      <h3>Módulo LCD I2C → Nano</h3>
+      <table class="pin-table">
+        <thead>
+          <tr><th>Pin LCD I2C</th><th>Nombre</th><th>Destino en Nano</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Pin 1</td>
+            <td><span class="pin-dot" style="background:#444"></span>GND</td>
+            <td>Pin GND</td>
+          </tr>
+          <tr>
+            <td>Pin 2</td>
+            <td><span class="pin-dot" style="background:#DD2222"></span>VCC</td>
+            <td>Pin 5V</td>
+          </tr>
+          <tr>
+            <td>Pin 3</td>
+            <td><span class="pin-dot" style="background:#FF7700"></span>SDA</td>
+            <td>Pin A4</td>
+          </tr>
+          <tr>
+            <td>Pin 4</td>
+            <td><span class="pin-dot" style="background:#CCAA00"></span>SCL</td>
+            <td>Pin A5</td>
+          </tr>
+        </tbody>
+      </table>
+      <p style="margin-top:16px; font-size:13px; color:var(--muted); line-height:1.7;">
+        La LCD queda fuera de la protoboard. Conecta directo con 4 cables jumper.
+      </p>
+    </div>
+  </div>
+</section>
+
+<div class="divider"></div>
+
+<!-- ═══════════ CÓDIGO ═══════════ -->
+<section id="codigo">
+  <div class="section-tag">Implementación</div>
+  <h2 class="section-title reveal">Código <em>fuente</em></h2>
+
+  <div class="code-block reveal">
+    <div class="code-header">
+      <span class="code-filename">termometro.ino</span>
+      <span class="code-lang">ARDUINO C++</span>
+    </div>
+    <pre><span class="cm">// Termómetro Digital con Arduino Nano + LM35 + LCD I2C</span>
+<span class="cm">// Electrónica Analógica · 2025</span>
+
+<span class="kw">#include</span> <span class="str">&lt;Wire.h&gt;</span>
+<span class="kw">#include</span> <span class="str">&lt;LiquidCrystal_I2C.h&gt;</span>
+
+LiquidCrystal_I2C <span class="fn">lcd</span>(<span class="num">0x27</span>, <span class="num">16</span>, <span class="num">2</span>);  <span class="cm">// Dirección I2C, cols, filas</span>
+<span class="kw">const int</span> sensorPin <span class="op">=</span> <span class="num">A0</span>;
+
+<span class="type">void</span> <span class="fn">setup</span>() {
+  lcd.<span class="fn">init</span>();
+  lcd.<span class="fn">backlight</span>();
+  lcd.<span class="fn">setCursor</span>(<span class="num">0</span>, <span class="num">0</span>);
+  lcd.<span class="fn">print</span>(<span class="str">"  Iniciando..."</span>);
+  <span class="fn">delay</span>(<span class="num">1500</span>);
+}
+
+<span class="type">void</span> <span class="fn">loop</span>() {
+  <span class="type">int</span> lectura    = <span class="fn">analogRead</span>(sensorPin);
+  <span class="type">float</span> voltaje  = lectura * (<span class="num">5.0</span> / <span class="num">1023.0</span>);
+  <span class="type">float</span> temp     = voltaje * <span class="num">100.0</span>;
+
+  lcd.<span class="fn">clear</span>();
+  lcd.<span class="fn">setCursor</span>(<span class="num">0</span>, <span class="num">0</span>);
+
+  <span class="kw">if</span> (temp &lt; <span class="num">30.0</span>) {
+    lcd.<span class="fn">print</span>(<span class="str">"TEMP NORMAL"</span>);
+  } <span class="kw">else if</span> (temp &lt; <span class="num">38.0</span>) {
+    lcd.<span class="fn">print</span>(<span class="str">"TEMP ELEVADA"</span>);
+  } <span class="kw">else</span> {
+    lcd.<span class="fn">print</span>(<span class="str">"ALTA TEMP !"</span>);
+  }
+
+  lcd.<span class="fn">setCursor</span>(<span class="num">0</span>, <span class="num">1</span>);
+  lcd.<span class="fn">print</span>(temp, <span class="num">1</span>);
+  lcd.<span class="fn">print</span>(<span class="str">" C"</span>);
+
+  <span class="fn">delay</span>(<span class="num">1000</span>);  <span class="cm">// Actualizar cada segundo</span>
+}</pre>
+  </div>
+</section>
+
+<!-- ═══════════ FOOTER ═══════════ -->
+<footer>
+  <div class="footer-logo">Termómetro <em>Digital</em></div>
+  <div class="footer-info">
+    Electrónica Analógica · 2025<br>
+    Arduino Nano + LM35 + LCD I2C<br>
+    <span style="color:var(--accent)">Aplicación Residencial</span>
+  </div>
+</footer>
+
+<!-- ═══════════ LIVE TEMP SIMULATION ═══════════ -->
+<script>
+// Cursor
+const cursor = document.getElementById('cursor');
+const ring = document.getElementById('cursorRing');
+let mx = 0, my = 0, rx = 0, ry = 0;
+document.addEventListener('mousemove', e => { mx = e.clientX; my = e.clientY; });
+function animCursor() {
+  cursor.style.left = mx + 'px';
+  cursor.style.top = my + 'px';
+  rx += (mx - rx) * 0.15;
+  ry += (my - ry) * 0.15;
+  ring.style.left = rx + 'px';
+  ring.style.top = ry + 'px';
+  requestAnimationFrame(animCursor);
+}
+animCursor();
+
+// Simulate temp
+let baseTemp = 28.4;
+const tempEl = document.getElementById('tempNum');
+const statusEl = document.getElementById('tempStatus');
+const fillEl = document.getElementById('tempFill');
+
+function updateTemp() {
+  baseTemp += (Math.random() - 0.5) * 0.8;
+  baseTemp = Math.max(22, Math.min(42, baseTemp));
+  const t = baseTemp.toFixed(1);
+  tempEl.innerHTML = t + '<span class="unit">°C</span>';
+  const pct = ((baseTemp - 20) / 30 * 100).toFixed(0);
+  fillEl.style.width = pct + '%';
+  fillEl.style.background = baseTemp > 38 ? '#ff4757' : baseTemp > 30 ? '#f5c842' : '#00e5a0';
+  statusEl.style.color = baseTemp > 38 ? '#ff4757' : baseTemp > 30 ? '#f5c842' : '#00e5a0';
+  statusEl.textContent = '● ' + (baseTemp > 38 ? 'ALTA TEMP !' : baseTemp > 30 ? 'TEMP ELEVADA' : 'TEMP NORMAL');
+}
+setInterval(updateTemp, 1200);
+
+// Reveal on scroll
+const reveals = document.querySelectorAll('.reveal');
+const obs = new IntersectionObserver(entries => {
+  entries.forEach((e, i) => {
+    if (e.isIntersecting) {
+      setTimeout(() => e.target.classList.add('visible'), i * 80);
+    }
+  });
+}, { threshold: 0.1 });
+reveals.forEach(r => obs.observe(r));
+</script>
+</body>
+</html>
